@@ -1,0 +1,3 @@
+﻿  dllmain.cpp
+C:\Users\un\source\repos\Dll\Dll\dllmain.cpp(58,24): warning C4101: 'returnLength': unreferenced local variable
+  Dll.vcxproj -> C:\Users\un\source\repos\Dll\x64\Debug\Dll.dll

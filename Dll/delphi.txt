@@ -1,0 +1,146 @@
+
+interface uses Winapi.Windows, SYstem.SysUtils, System.Classes, Winapi.tlhelp32;
+
+type TFuncRes=record
+     rs:integer;
+     lasterror:integer;
+     end;
+
+function AppIsRunning(aname:string):boolean;
+function StartAppWithAR(app,_params:string):TFuncRes;
+function StartAppWithOutAR(app,_params:string):TFuncRes;
+
+implementation
+
+type EPrivilegeException = class(Exception);
+type TWTSQueryUserToken = function(SessionID: DWORD; var Token: THandle): BOOL; stdcall;
+
+function WTSGetActiveConsoleSessionId: DWORD; stdcall; external 'kernel32.dll';
+function CreateEnvironmentBlock(var lpEnvironment: Pointer; hToken: THandle; bInherit: BOOL): BOOL; stdcall; external 'Userenv.dll';
+function DestroyEnvironmentBlock(pEnvironment: Pointer): BOOL; stdcall; external 'Userenv.dll';
+
+/function AppIsRunning(aname:string):boolean;
+/var Snapshot:Thandle; proc:TprocessEntry32;
+/begin
+/result:=false;
+/Snapshot:=CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS,0);
+/if snapshot=INVALID_HANDLE_VALUE then exit;
+/proc.dwSize:=sizeof(TprocessEntry32);
+/if Process32First(snapshot,proc) then
+/repeat
+/if ansiuppercase(proc.szExeFile)=ansiuppercase(aname) then begin result:=true; break; end;
+/until not process32next(snapshot,proc);
+/closehandle(snapshot);
+/end;
+
+procedure PrivilegeException;
+begin
+raise EPrivilegeException.Create(SysErrorMessage(GetLastError));
+end;
+
+//function EnablePrivilegeEx(Process: THandle; Name: String; Enable: Boolean): Boolean;
+//var LUID: TLargeInteger; Token: THandle; Privileges: TOKEN_PRIVILEGES; ReturnLength: Cardinal;
+//begin
+//Result:=false;
+//if LookupPrivilegeValue(nil,PWideChar(Name),LUID) then
+//   //begin
+//   //if OpenProcessToken(Process,TOKEN_QUERY or TOKEN_ADJUST_PRIVILEGES,Token) then
+/      begin
+/      Privileges.PrivilegeCount:=1;
+/      Privileges.Privileges[0].Luid:=LUID;
+/      if Enable then Privileges.Privileges[0].Attributes:=SE_PRIVILEGE_ENABLED else Privileges.Privileges[0].Attributes:=0;
+/      AdjustTokenPrivileges(Token,false,Privileges,SizeOf(TOKEN_PRIVILEGES),Privileges,ReturnLength);
+/      if GetLastError=ERROR_SUCCESS then Result:=true;
+/      CloseHandle(Token);
+/      end else PrivilegeException;
+/   end
+//   else PrivilegeException;
+//end;
+
+/function EnablePrivilege(Name: String; Enable: Boolean): Boolean;
+/begin
+/Result:=EnablePrivilegeEx(GetCurrentProcess,Name,Enable);
+/end;
+
+function StartAppWithAR(app,_params:string):TFuncRes;
+type TWTSQueryUserToken = function(SessionID: DWORD; var Token: THandle): BOOL; stdcall;
+var WINDOW_STATION_NAME,APPLICATION_DESKTOP_NAME:string;
+dwSessionId: DWORD;
+hToken:THandle;
+returnLength:cardinal;
+hLib:THandle;
+WTSQueryUserToken: TWTSQueryUserToken;
+oldSize:DWord;
+SI: TStartupInfo; PI: TProcessInformation;
+pEnv:Pointer;
+pInf:TOKEN_LINKED_TOKEN;
+systemToken:THandle;
+const LTT='abcdefghijklmnopqrstuvwxyz';
+const SE_TCB_NAME='SeTcbPrivilege'; //!!!!!!!!!!hide
+begin
+result.rs:=0;
+result.lasterror:=0;
+////////////////////////////////////////////////////////////////////////////////
+WINDOW_STATION_NAME:=ansiuppercase(LTT[23])+LTT[9]+LTT[14]+LTT[19]+LTT[20]+LTT[1]+inttostr(0); //Winsta0
+APPLICATION_DESKTOP_NAME:=ansiuppercase(LTT[4])+LTT[5]+LTT[6]+LTT[1]+LTT[21]+LTT[12]+LTT[20];//Default
+hToken:=INVALID_HANDLE_VALUE;
+oldSize:=0;
+////////////////////////////////////////////////////////////////////////////////
+dwSessionID:=WTSGetActiveConsoleSessionId;
+if EnablePrivilege(SE_TCB_NAME,true)=false then
+   begin
+   Result.rs:=5002;
+   result.lasterror:=GetLastError;
+   exit;
+   end;
+////////////////////////////////////////////////////////////////////////////////
+if not OpenProcessToken(GetCurrentProcess(), TOKEN_ALL_ACCESS, systemToken) then
+   begin
+   Result.rs:=5005;
+   result.lasterror:=GetLastError;
+   CloseHandle(hToken);
+   exit;
+   end;
+if not DuplicateTokenEx(systemToken, TOKEN_ALL_ACCESS, nil, SecurityImpersonation, TokenPrimary, &hToken) then
+   begin
+   Result.rs:=5006;
+   result.lasterror:=GetLastError;
+   CloseHandle(hToken);
+   closehandle(systemToken);
+   exit;
+   end;
+closehandle(systemToken);
+if not SetTokenInformation(hToken, TokenSessionId, @dwSessionId, sizeof(DWORD)) then
+   begin
+   Result.rs:=5007;
+   result.lasterror:=GetLastError;
+   CloseHandle(hToken);
+   exit;
+   end;
+if not CreateEnvironmentBlock(pEnv, hToken, false) then
+   begin
+   Result.rs:=5008;
+   result.lasterror:=GetLastError;
+   CloseHandle(hToken);
+   exit;
+   end;
+try//try1
+ZeroMemory(@SI, SizeOf(TStartupInfo));
+SI.cb:=SizeOf(TStartupInfo);
+//SI.wShowWindow:=SW_HIDE;
+SI.lpDesktop:=PwideChar(WINDOW_STATION_NAME+'\'+APPLICATION_DESKTOP_NAME);
+if CreateProcessAsUser(hToken, nil, PwideChar(widestring(trim('"'+app+'" '+_params))), nil, nil, False, {NORMAL_PRIORITY_CLASS or} CREATE_UNICODE_ENVIRONMENT, pEnv, pwidechar(widestring(extractfiledir(app))), SI, PI) then
+   begin
+   CloseHandle(pi.hProcess);
+   CloseHandle(pi.hThread);
+   end
+   else
+   begin
+   Result.lasterror:=GetLastError;
+   result.rs:=5009;
+   end;
+finally //try1
+CloseHandle(hToken);
+end; //try1
+try DestroyEnvironmentBlock(pEnv); except end;
+end;
