@@ -1,65 +1,48 @@
 #include <windows.h>
 #include <iostream>
-#include <vss.h>
-#include <vswriter.h>
-#include <vsbackup.h>
 
-#pragma comment(lib, "VssApi.lib")
-
-void CreateShadowCopy() {
-    IVssBackupComponents* pBackupComponents = nullptr;
-    HRESULT hr = CreateVssBackupComponents(&pBackupComponents);
-    if (FAILED(hr)) {
-        std::cerr << "Failed to create VSS backup components. Error: " << hr << std::endl;
+void GetFileSectors(LPCWSTR filePath) {
+    HANDLE hFile = CreateFile(filePath, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (hFile == INVALID_HANDLE_VALUE) {
+        std::cerr << "Failed to open file. Error: " << GetLastError() << std::endl;
         return;
     }
 
-    hr = pBackupComponents->InitializeForBackup();
-    if (FAILED(hr)) {
-        std::cerr << "Failed to initialize for backup. Error: " << hr << std::endl;
-        pBackupComponents->Release();
+    // Получение дескриптора тома
+    WCHAR volumePath[MAX_PATH];
+    if (!GetVolumePathName(filePath, volumePath, MAX_PATH)) {
+        std::cerr << "Failed to get volume path. Error: " << GetLastError() << std::endl;
+        CloseHandle(hFile);
         return;
     }
 
-    VSS_ID snapshotSetId = GUID_NULL;
-    hr = pBackupComponents->StartSnapshotSet(&snapshotSetId);
-    if (FAILED(hr)) {
-        std::cerr << "Failed to start snapshot set. Error: " << hr << std::endl;
-        pBackupComponents->Release();
+    HANDLE hVolume = CreateFile(volumePath, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0, NULL);
+    if (hVolume == INVALID_HANDLE_VALUE) {
+        std::cerr << "Failed to open volume. Error: " << GetLastError() << std::endl;
+        CloseHandle(hFile);
         return;
     }
 
-    VSS_ID snapshotId = GUID_NULL;
-    hr = pBackupComponents->AddToSnapshotSet(L"C:\\", GUID_NULL, &snapshotId);
-    if (FAILED(hr)) {
-        std::cerr << "Failed to add to snapshot set. Error: " << hr << std::endl;
-        pBackupComponents->Release();
-        return;
+    // Получение информации о секторах
+    STARTING_VCN_INPUT_BUFFER inputBuffer = { 0 };
+    RETRIEVAL_POINTERS_BUFFER outputBuffer;
+    DWORD bytesReturned;
+
+    if (!DeviceIoControl(hFile, FSCTL_GET_RETRIEVAL_POINTERS, &inputBuffer, sizeof(inputBuffer), &outputBuffer, sizeof(outputBuffer), &bytesReturned, NULL)) {
+        std::cerr << "Failed to get retrieval pointers. Error: " << GetLastError() << std::endl;
+    } else {
+        std::cout << "File is stored in the following sectors:" << std::endl;
+        for (DWORD i = 0; i < outputBuffer.ExtentCount; ++i) {
+            std::cout << "LCN: " << outputBuffer.Extents[i].Lcn.QuadPart << ", Length: " << outputBuffer.Extents[i].NextVcn.QuadPart - outputBuffer.Extents[i].Lcn.QuadPart << std::endl;
+        }
     }
 
-    hr = pBackupComponents->DoSnapshotSet(nullptr, nullptr);
-    if (FAILED(hr)) {
-        std::cerr << "Failed to create snapshot. Error: " << hr << std::endl;
-        pBackupComponents->Release();
-        return;
-    }
-
-    VSS_SNAPSHOT_PROP snapshotProp;
-    hr = pBackupComponents->GetSnapshotProperties(snapshotId, &snapshotProp);
-    if (FAILED(hr)) {
-        std::cerr << "Failed to get snapshot properties. Error: " << hr << std::endl;
-        pBackupComponents->Release();
-        return;
-    }
-
-    std::wcout << L"Snapshot created at: " << snapshotProp.m_pwszSnapshotDeviceObject << std::endl;
-
-    // Освобождение ресурсов
-    pBackupComponents->Release();
-    VssFreeSnapshotProperties(&snapshotProp);
+    CloseHandle(hVolume);
+    CloseHandle(hFile);
 }
 
 int main() {
-    CreateShadowCopy();
+    LPCWSTR filePath = L"C:\\path\\to\\file.txt"; // Путь к файлу
+    GetFileSectors(filePath);
     return 0;
 }
