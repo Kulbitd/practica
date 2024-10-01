@@ -1,8 +1,9 @@
 #include <windows.h>
 #include <iostream>
+#include <vector>
 
 void GetFileSectors(LPCWSTR filePath) {
-    HANDLE hFile = CreateFile(filePath, NULL, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0, NULL);
+    HANDLE hFile = CreateFile(filePath, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0, NULL);
     if (hFile == INVALID_HANDLE_VALUE) {
         std::cerr << "Failed to open file. Error: " << GetLastError() << std::endl;
         return;
@@ -18,22 +19,73 @@ void GetFileSectors(LPCWSTR filePath) {
 
     // Получение информации о секторах
     STARTING_VCN_INPUT_BUFFER inputBuffer = { 0 };
-    RETRIEVAL_POINTERS_BUFFER outputBuffer = { 0 };
-    DWORD bytesReturned;
+    DWORD bytesReturned = 0;
 
-
-    if (!DeviceIoControl(hFile, FSCTL_GET_RETRIEVAL_POINTERS, &inputBuffer, sizeof(inputBuffer), &outputBuffer, sizeof(outputBuffer), &bytesReturned, NULL)) {
-        std::cerr << "Failed to get retrieval pointers. Error: " << GetLastError() << std::endl;
+    // Первый вызов для получения размера буфера
+    DeviceIoControl(hFile, FSCTL_GET_RETRIEVAL_POINTERS, &inputBuffer, sizeof(inputBuffer), NULL, 0, &bytesReturned, NULL);
+    if (GetLastError() != ERROR_MORE_DATA) {
+        std::cerr << "Failed to get retrieval pointers size. Error: " << GetLastError() << std::endl;
+        CloseHandle(hVolume);
+        CloseHandle(hFile);
+        return;
     }
-    else {
+
+    // Выделение памяти для буфера
+    std::vector<BYTE> buffer(bytesReturned);
+    RETRIEVAL_POINTERS_BUFFER* outputBuffer = reinterpret_cast<RETRIEVAL_POINTERS_BUFFER*>(buffer.data());
+
+    // Второй вызов для получения данных
+    if (!DeviceIoControl(hFile, FSCTL_GET_RETRIEVAL_POINTERS, &inputBuffer, sizeof(inputBuffer), outputBuffer, bytesReturned, &bytesReturned, NULL)) {
+        std::cerr << "Failed to get retrieval pointers. Error: " << GetLastError() << std::endl;
+    } else {
         std::cout << "File is stored in the following sectors:" << std::endl;
-        for (DWORD i = 0; i < outputBuffer.ExtentCount; ++i) {
-            std::cout << "LCN: " << outputBuffer.Extents[i].Lcn.QuadPart << ", Length: " << outputBuffer.Extents[i].NextVcn.QuadPart - outputBuffer.Extents[i].Lcn.QuadPart << std::endl;
+        for (DWORD i = 0; i < outputBuffer->ExtentCount; ++i) {
+            std::cout << "LCN: " << outputBuffer->Extents[i].Lcn.QuadPart << ", Length: " << outputBuffer->Extents[i].NextVcn.QuadPart - outputBuffer->Extents[i].Lcn.QuadPart << std::endl;
+            // Копирование данных из кластера в новый файл
+            CopyClusterToFile(hVolume, outputBuffer->Extents[i].Lcn, outputBuffer->Extents[i].NextVcn.QuadPart - outputBuffer->Extents[i].Lcn.QuadPart, L"C:\\path\\to\\output.txt");
         }
     }
 
     CloseHandle(hVolume);
     CloseHandle(hFile);
+}
+
+void CopyClusterToFile(HANDLE hVolume, LARGE_INTEGER lcn, DWORD length, LPCWSTR outputPath) {
+    HANDLE hOutputFile = CreateFile(outputPath, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (hOutputFile == INVALID_HANDLE_VALUE) {
+        std::cerr << "Failed to create output file. Error: " << GetLastError() << std::endl;
+        return;
+    }
+
+    // Размер кластера (обычно 4096 байт, но лучше получить его программно)
+    DWORD clusterSize = 4096;
+    std::vector<BYTE> buffer(clusterSize * length);
+
+    LARGE_INTEGER offset;
+    offset.QuadPart = lcn.QuadPart * clusterSize;
+
+    // Переместить указатель файла на нужный кластер
+    if (SetFilePointerEx(hVolume, offset, NULL, FILE_BEGIN) == 0) {
+        std::cerr << "Failed to set file pointer. Error: " << GetLastError() << std::endl;
+        CloseHandle(hOutputFile);
+        return;
+    }
+
+    DWORD bytesRead;
+    if (!ReadFile(hVolume, buffer.data(), buffer.size(), &bytesRead, NULL)) {
+        std::cerr << "Failed to read from volume. Error: " << GetLastError() << std::endl;
+        CloseHandle(hOutputFile);
+        return;
+    }
+
+    DWORD bytesWritten;
+    if (!WriteFile(hOutputFile, buffer.data(), bytesRead, &bytesWritten, NULL)) {
+        std::cerr << "Failed to write to output file. Error: " << GetLastError() << std::endl;
+    } else {
+        std::cout << "Successfully copied cluster to file." << std::endl;
+    }
+
+    CloseHandle(hOutputFile);
 }
 
 int main() {
