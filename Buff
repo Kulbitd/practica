@@ -8,7 +8,6 @@ void GetFileSectors(LPCWSTR filePath) {
         return;
     }
 
-    // Получение дескриптора тома
     HANDLE hVolume = CreateFile(L"\\\\.\\C:", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0, NULL);
     if (hVolume == INVALID_HANDLE_VALUE) {
         std::cerr << "Failed to open volume. Error: " << GetLastError() << std::endl;
@@ -16,12 +15,11 @@ void GetFileSectors(LPCWSTR filePath) {
         return;
     }
 
-    // Получение информации о секторах
     STARTING_VCN_INPUT_BUFFER inputBuffer = { 0 };
     RETRIEVAL_POINTERS_BUFFER outputBuffer;
     DWORD bytesReturned;
 
-    if (!DeviceIoControl(hFile, FSCTL_GET_RETRIEVAL_POINTERS, &inputBuffer, sizeof(inputBuffer), &outputBuffer, sizeof(outputBuffer), &bytesReturned, NULL)) {
+    if (!DeviceIoControl(hVolume, FSCTL_GET_RETRIEVAL_POINTERS, &inputBuffer, sizeof(inputBuffer), &outputBuffer, sizeof(outputBuffer), &bytesReturned, NULL)) {
         std::cerr << "Failed to get retrieval pointers. Error: " << GetLastError() << std::endl;
     } else {
         std::cout << "File is stored in the following sectors:" << std::endl;
@@ -39,4 +37,3 @@ int main() {
     GetFileSectors(filePath);
     return 0;
 }
-
