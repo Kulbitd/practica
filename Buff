@@ -9,14 +9,7 @@ void GetFileSectors(LPCWSTR filePath) {
     }
 
     // Получение дескриптора тома
-    WCHAR volumePath[MAX_PATH];
-    if (!GetVolumePathName(filePath, volumePath, MAX_PATH)) {
-        std::cerr << "Failed to get volume path. Error: " << GetLastError() << std::endl;
-        CloseHandle(hFile);
-        return;
-    }
-
-    HANDLE hVolume = CreateFile(volumePath, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0, NULL);
+    HANDLE hVolume = CreateFile(L"\\\\.\\C:", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0, NULL);
     if (hVolume == INVALID_HANDLE_VALUE) {
         std::cerr << "Failed to open volume. Error: " << GetLastError() << std::endl;
         CloseHandle(hFile);
@@ -46,3 +39,4 @@ int main() {
     GetFileSectors(filePath);
     return 0;
 }
+
