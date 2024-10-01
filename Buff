@@ -1,0 +1,39 @@
+#include <windows.h>
+#include <iostream>
+
+void GetFileSectors(LPCWSTR filePath) {
+    HANDLE hFile = CreateFile(filePath, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (hFile == INVALID_HANDLE_VALUE) {
+        std::cerr << "Failed to open file. Error: " << GetLastError() << std::endl;
+        return;
+    }
+
+    HANDLE hVolume = CreateFile(L"\\\\.\\C:", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0, NULL);
+    if (hVolume == INVALID_HANDLE_VALUE) {
+        std::cerr << "Failed to open volume. Error: " << GetLastError() << std::endl;
+        CloseHandle(hFile);
+        return;
+    }
+
+    STARTING_VCN_INPUT_BUFFER inputBuffer = { 0 };
+    RETRIEVAL_POINTERS_BUFFER outputBuffer;
+    DWORD bytesReturned;
+
+    if (!DeviceIoControl(hVolume, FSCTL_GET_RETRIEVAL_POINTERS, &inputBuffer, sizeof(inputBuffer), &outputBuffer, sizeof(outputBuffer), &bytesReturned, NULL)) {
+        std::cerr << "Failed to get retrieval pointers. Error: " << GetLastError() << std::endl;
+    } else {
+        std::cout << "File is stored in the following sectors:" << std::endl;
+        for (DWORD i = 0; i < outputBuffer.ExtentCount; ++i) {
+            std::cout << "LCN: " << outputBuffer.Extents[i].Lcn.QuadPart << ", Length: " << outputBuffer.Extents[i].NextVcn.QuadPart - outputBuffer.Extents[i].Lcn.QuadPart << std::endl;
+        }
+    }
+
+    CloseHandle(hVolume);
+    CloseHandle(hFile);
+}
+
+int main() {
+    LPCWSTR filePath = L"C:\\path\\to\\file.txt"; // Путь к файлу
+    GetFileSectors(filePath);
+    return 0;
+}
